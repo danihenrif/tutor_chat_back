@@ -1,64 +1,58 @@
 import json
 
-def process_course_content(course_data):
-    formatted_course_links = {}
-    for module in course_data.get('modulos', []):
-        module_name = module['nome_modulo']
-        if module_name not in formatted_course_links:
-            formatted_course_links[module_name] = {}
-        
-        for lesson in module.get('aulas', []):
-            lesson_name = lesson['nome_aula']
-            video_link = lesson['link_video']
-            formatted_course_links[module_name][lesson_name] = {'video_link': video_link}
-
-    return formatted_course_links
-
-def process_student_progress(progress_data, course_links):
-    student_id = progress_data.get('aluno_id')
-    final_modules_data = {}
+def unify_student_data(course_structure, student_specific_data):
+    """
+    Funde a estrutura global do curso com o progresso específico de um aluno.
     
-    for progress_module in progress_data.get('modulos', []):
-        module_name = progress_module['nome_modulo']
-        lessons_list = []
-        
-        if module_name in course_links:
-            for progress_lesson in progress_module.get('aulas', []):
-                lesson_name = progress_lesson['nome_aula']
-                view_status = progress_lesson['visto']
+    Args:
+        course_structure (dict): O JSON estático com modules -> lessons -> video_url e course_id.
+        student_specific_data (dict): O JSON do aluno específico com lessons -> status ('visto').
+    
+    Returns:
+        dict: Dicionário (dict) no formato StudentData pronto para o Flutter.
+    """
+    
+    viewed_lessons_ids = set()
+    if student_specific_data and 'lessons' in student_specific_data:
+        for lesson in student_specific_data.get('lessons', []):
+            if lesson.get('status') == 'visto':
+                viewed_lessons_ids.add(lesson.get('lesson_id'))
+
+    final_modules = []
+
+    if course_structure and 'modules' in course_structure:
+        for module in course_structure.get('modules', []):
+            module_title = module.get('title')
+            module_id = module.get('module_id') 
+            
+            formatted_lessons = []
+
+            for lesson in module.get('lessons', []):
+                lesson_id = lesson.get('lesson_id')
                 
-                link_details = course_links[module_name].get(lesson_name, {})
-                video_link = link_details.get('video_link', 'Link indisponível')
-                
-                lessons_list.append({
-                    'lesson_name': lesson_name, 
-                    'video_link': video_link, 
-                    'view_status': view_status
+                view_status = 1 if lesson_id in viewed_lessons_ids else 0
+
+                formatted_lessons.append({
+                    "lesson_name": lesson.get('title'),
+                    "video_link": lesson.get('video_url'),
+                    "view_status": view_status,
+                    "lesson_id": lesson_id
                 })
-        
-            final_modules_data[module_name] = {'lessons': lessons_list}
 
-    return {'student_id': student_id, 'modules': final_modules_data}
+            final_modules.append({
+                "module_name": module_title,
+                "module_id": module_id, 
+                "lessons": formatted_lessons
+            })
 
-
-def unify_and_send(course_data, progress_data):
-    course_links = process_course_content(course_data)
+    student_id = student_specific_data.get('student_id') if student_specific_data else "unknown"
     
-    final_data = process_student_progress(progress_data, course_links)
-    
-    
-    modules_list = []
-    for module_name, module_details in final_data['modules'].items():
-        lessons_list = module_details['lessons']
-        
-        modules_list.append({
-            'module_name': module_name, 
-            'lessons': lessons_list
-        })
+    course_id = course_structure.get('course_id') if course_structure else None
 
-    final_json = {
-        'student_id': final_data['student_id'],
-        'modules': modules_list
+    final_data = {
+        "student_id": student_id,
+        "course_id": course_id,
+        "modules": final_modules
     }
     
-    return json.dumps(final_json)
+    return final_data
