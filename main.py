@@ -3,11 +3,13 @@ import openai
 from dotenv import load_dotenv
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-import integration_service
-import json
 import requests 
 
 load_dotenv()
+
+APITUTOR_URL = os.getenv("APITUTOR_BASE_URL", "http://localhost:3000/api")
+COURSE_ID = os.getenv("COURSE_ID", "edb-01")
+
 client = openai.Client()
 
 try:
@@ -16,13 +18,6 @@ try:
 except FileNotFoundError:
     print("ERRO: O arquivo 'initial_prompt.txt' não foi encontrado!")
     initial_prompt = "" 
-
-# Cache para o progresso dos alunos (Student-specific)
-global_student_data_cache = {} 
-
-# Cache para a estrutura do curso (Global)
-# Agora começa vazio e será preenchido quando o professor enviar os dados
-GLOBAL_COURSE_STRUCTURE = {}
 
 def geracao_texto(mensagens):
     resposta = client.chat.completions.create(
@@ -37,12 +32,10 @@ def geracao_texto(mensagens):
         texto = resposta_stream.choices[0].delta.content
         if texto:
             texto_completo += texto  
-    
     return texto_completo
 
 app = Flask(__name__)
 CORS(app)
-
 
 @app.route('/chat', methods=['POST'])
 def chat():
@@ -68,94 +61,52 @@ def chat():
         })
     
     except Exception as e:
-        print(f"Erro na geração de texto: {e}")
         return jsonify({"erro": "Falha ao gerar resposta do bot."}), 500
 
+@app.route('/get-viewed-lessons/<string:student_id>', methods=['GET'])
+def get_viewed_lessons(student_id):
+    try:
+        url = f"{APITUTOR_URL}/course/{COURSE_ID}/student/{student_id}/lessons/viewed"
+        response = requests.get(url)
+        return jsonify(response.json()), response.status_code
+    except Exception as e:
+        return jsonify({"erro": str(e)}), 500
 
-@app.route('/receive-data', methods=['POST'])
-def receive_data_from_professor():
-    global global_student_data_cache
-    global GLOBAL_COURSE_STRUCTURE
-    
+@app.route('/update-progress/<string:student_id>', methods=['POST'])
+def update_progress(student_id):
     try:
         dados = request.get_json()
         
-        course_data = dados.get('course_data')
-        if course_data:
-            GLOBAL_COURSE_STRUCTURE = course_data
-            print("Estrutura do curso atualizada.")
-
-        progress_data = dados.get('progress_data')
+        url = f"{APITUTOR_URL}/course/{COURSE_ID}/student/{student_id}/progress"
         
-        count = 0
-        if progress_data:
-            students_list = progress_data.get('students')
-            
-            if isinstance(students_list, list):
-                for student in students_list:
-                    s_id = student.get('student_id')
-                    if s_id:
-                        global_student_data_cache[s_id] = student
-                        count += 1
+        payload_apitutor = {
+            "lesson_id": dados.get('lesson_id'),
+            "status": dados.get('status')
+        }
         
-        if not course_data and not progress_data:
-             return jsonify({"status": "Nenhum dado (curso ou progresso) encontrado no payload."}), 400
-
-        return jsonify({
-            "status": "Dados recebidos e processados", 
-            "course_updated": bool(course_data),
-            "students_updated": count
-        }), 200
-
+        response = requests.post(url, json=payload_apitutor)
+        return jsonify(response.json()), response.status_code
     except Exception as e:
-        print(f"Erro no processamento de dados recebidos: {e}")
-        return jsonify({"status": "Erro interno de processamento"}), 500
+        return jsonify({"erro": str(e)}), 500
 
 @app.route('/student-data/<string:student_id>', methods=['GET'])
-def student_data_for_flutter(student_id):
-    global global_student_data_cache
-    global GLOBAL_COURSE_STRUCTURE
-    
-    if not GLOBAL_COURSE_STRUCTURE:
-         return jsonify({"erro": "Estrutura do curso ainda não foi enviada pelo professor."}), 503
-
-    student_progress_raw = global_student_data_cache.get(student_id)
-    
-    if student_progress_raw:
-        final_data = integration_service.unify_student_data(
-            GLOBAL_COURSE_STRUCTURE, 
-            student_progress_raw
-        )
-        return jsonify(final_data), 200
-    else:
-        return jsonify({"erro": "Dados do aluno não encontrados."}), 404
-
-
-PROFESSOR_UPDATE_URL = "link da api do professor" 
-
-@app.route('/update-progress', methods=['POST'])
-def update_progress():
+def get_course_data(student_id):
     try:
-        progress_data = request.get_json()
-        headers = {'Content-Type': 'application/json'}
-        
-        response_alan = requests.post(
-            PROFESSOR_UPDATE_URL, 
-            json=progress_data, 
-            headers=headers
-        )
-        
-        if response_alan.status_code == 200:
-            return jsonify({"status": "Sucesso no sistema do professor."}), 200
-        else:
-            return jsonify({
-                "erro": "Falha na API do professor.",
-                "status_code_alan": response_alan.status_code
-            }), 502 
-            
+        url = f"{APITUTOR_URL}/course/{COURSE_ID}/student/{student_id}"
+        response = requests.get(url)
+        return jsonify(response.json()), response.status_code
     except Exception as e:
-        print(f"Erro ao enviar progresso: {e}")
-        return jsonify({"erro": "Erro de conexão no backend."}), 500
+        return jsonify({"erro": str(e)}), 500
+
+@app.route('/register-student', methods=['POST'])
+def register_student():
+    try:
+        dados = request.get_json()
+        url = f"{APITUTOR_URL}/student"
+        response = requests.post(url, json=dados)
+        return jsonify(response.json()), response.status_code
+    except Exception as e:
+        return jsonify({"erro": str(e)}), 500
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
