@@ -89,7 +89,7 @@ def update_progress(student_id):
     except Exception as e:
         return jsonify({"erro": str(e)}), 500
 
-@app.route('/student-data/<string:student_id>', methods=['GET'])
+@app.route('/course-data/<string:student_id>', methods=['GET'])
 def get_course_data(student_id):
     try:
         url = f"{APITUTOR_URL}/course/{COURSE_ID}/student/{student_id}"
